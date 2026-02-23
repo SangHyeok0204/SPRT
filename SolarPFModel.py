@@ -29,6 +29,10 @@ TOKEN_AMOUNT = 1_200_000_000                  # 토큰화 대상 12억 (60%)
 INITIAL_PF_COUNT = 5                          # 초기 운영 PF 수
 ROLLOVER_PF_COUNT = 5                         # 롤오버 시 편입 PF 수
 
+# 토큰 단위 (소액 투자자 접근성)
+TOKEN_UNIT_PRICE = 10_000                     # 토큰 1개당 가격 1만원
+TOKENS_PER_PF = TOKEN_AMOUNT // TOKEN_UNIT_PRICE  # PF당 토큰 수 = 12억/1만 = 120,000개
+
 # 수익 분배 구조
 EQUITY_SHARE = 0.25                           # 지분수익 비율 (1/4)
 TOKEN_SHARE = 0.75                            # 토큰수익 비율 (3/4)
@@ -57,30 +61,32 @@ WINDOW_SIZE = 6                               # 고정가격 산정 윈도우 (6
 
 # 완공 모델 (위험률 기반)
 LAMBDA_DEFAULT = 0.15    # 월별 위험률 (일별 0.005 × 30 환산)
-P_COMPLETE_INIT = 0.7
+P_COMPLETE_INIT = 0.95   # 초기 완공 확률 95% (신재생에너지 PF 부도율 ~2.5% 반영)
 
 # SMP-REC 상관: 월별 로그수익률 ρ = -0.03 (통계적 비유의, 독립 처리)
 
 # 실데이터 기반 GBM 파라미터 (SMP_REC_발전량_DATA_ANALYSIS.md 참조)
+# 변동성 조정: 고정가격이 6개월 평균으로 산정되므로 이론적으로 σ/√6 ≈ 0.41배
+# 보수적으로 절반(0.5배) 적용 → SMP 16%, REC 14%
 SMP_PARAMS = dict(
     initial_price=113.0,      # 원/kWh (2025 EPSIS 평균)
-    annual_drift=0.02,        # +2%/년 (장기 +6.8%이나 최근 하락추세 반영, 보수적)
-    annual_vol=0.32,          # 32.4% (월별 로그수익률 × √12)
+    annual_drift=0.06,        # +6%/년 (장기 +6.8% 반영)
+    annual_vol=0.16,          # 16% (32.4% × 0.5, 6개월 평균 효과 보수적 적용)
     initial_volume=1000.0,    # MWh (미사용, 향후 확장용)
 )
 REC_PARAMS = dict(
     initial_price=77.0,       # 원/kWh (77,000원/REC ÷ 1000 kWh/MWh)
-    annual_drift=0.02,        # +1.8%/년 → 반올림 +2% (결측치 보간 후 연도별 평균 변화율)
-    annual_vol=0.28,          # 28.1% (결측치 선형보간 후 월별 로그수익률 × √12)
+    annual_drift=0.06,        # +6%/년 (SMP와 동일하게 조정)
+    annual_vol=0.14,          # 14% (28.1% × 0.5, 6개월 평균 효과 보수적 적용)
     initial_volume=500.0,     # MWh (미사용, 향후 확장용)
 )
 
 # SMP/REC 가격 상한/하한 (40년 GBM 발산 방지)
-# 실데이터 기반: 평균 ± 0.5×표준편차 (SMP_REC_발전량_DATA_ANALYSIS.md 참조)
-SMP_FLOOR = 99.0              # SMP 하한 (118.99 - 40.01/2)
-SMP_CAP = 139.0               # SMP 상한 (118.99 + 40.01/2)
-REC_FLOOR = 63.5              # REC 하한 (86.99 - 46.98/2)
-REC_CAP = 110.5               # REC 상한 (86.99 + 46.98/2)
+# 변동성 축소(16%, 14%)로 발산 위험 감소 → 범위를 평균 ± 1×STD로 확대
+SMP_FLOOR = 79.0              # SMP 하한 (118.99 - 40.01)
+SMP_CAP = 159.0               # SMP 상한 (118.99 + 40.01)
+REC_FLOOR = 40.0              # REC 하한 (86.99 - 46.98)
+REC_CAP = 134.0               # REC 상한 (86.99 + 46.98)
 
 # 발전량 파라미터 (1MW 태양광 PF, 이용률 14.5% 가정)
 # 월별 계절성 계수: 2024년 한국전력거래소 일별 발전량 실데이터 기반
@@ -216,9 +222,9 @@ class SolarPFModel:
             )
             self.pf_list.append(pf)
             self.pf_id_counter += 1
-        # 초기 토큰 발행 (TOKEN_AMOUNT × PF 수)
-        self.token_count = float(count)       # 초기 토큰 수 = PF 수 (단순화)
-        self.token_price = TOKEN_AMOUNT       # 초기 토큰 가격 = 토큰화 금액
+        # 초기 토큰 발행: PF당 120,000개 × 5개 PF = 600,000개
+        self.token_count = float(count * TOKENS_PER_PF)
+        self.token_price = TOKEN_UNIT_PRICE   # 토큰 1개당 가격 = 1만원
 
     def _init_market_buffers(self):
         """초기 합성 시장 데이터 윈도우 생성."""
@@ -494,6 +500,56 @@ class SolarPFModel:
 
         return pv
 
+    def _calculate_monthly_distribution_for_pf(self, pf: PFState, curtail_today: bool):
+        """개별 PF의 월별 분배금 계산 (POST 상태에서만 분배).
+
+        분배금 = (매출액 - 총비용) × (1 - 세율) × 토큰비율
+        건설 중(PRE)에는 분배금 = 0
+        """
+        # PRE 또는 FAILED 상태면 분배 없음
+        if pf.status != 'POST':
+            return 0.0
+
+        # 출력제한 발생 시 해당월 수익 = 0
+        if curtail_today:
+            return 0.0
+
+        # 운영기간 종료 체크
+        if pf.local_time >= T_SINGLE_PF:
+            return 0.0
+
+        avg_energy = np.mean(self.energy_buffer)
+
+        # 수익 계산 (장기계약 고정가격 사용)
+        if pf.contracted_price is not None:
+            price = pf.contracted_price
+        else:
+            avg_smp = np.mean(self.SMP_buffer[:, 0])
+            avg_rec = np.mean(self.REC_buffer[:, 0])
+            price = avg_smp + avg_rec
+
+        monthly_revenue = price * avg_energy * 1000
+
+        # 비용 계산
+        monthly_interest = SENIOR_DEBT * (SENIOR_INTEREST_RATE / 12)
+        op_month = max(0, pf.local_time - T_CONSTRUCTION)
+        if op_month < DEBT_REPAYMENT_YEARS * 12:
+            monthly_debt = DEBT_MONTHLY_PAYMENT
+        else:
+            monthly_debt = 0.0
+
+        gross_cf = monthly_revenue - OPEX_MONTHLY - monthly_interest - monthly_debt
+
+        if gross_cf > 0:
+            monthly_fcf = gross_cf * (1 - TAX_RATE)
+        else:
+            monthly_fcf = gross_cf  # 손실 시 세금 없음
+
+        # 토큰 보유자 귀속분 (75%)
+        token_distribution = monthly_fcf * TOKEN_SHARE
+
+        return max(0.0, token_distribution)  # 음수 분배 없음
+
     def _calculate_total_nav(self, curtail_today: bool):
         """모든 활성 PF의 NAV 합산."""
         total_nav = 0.0
@@ -530,6 +586,7 @@ class SolarPFModel:
         # 2. 모든 PF 업데이트 및 NAV 합산
         total_nav = 0.0
         total_pv = 0.0
+        total_distribution = 0.0  # 월별 분배금 합산
         active_count = 0
         avg_p_complete = 0.0
 
@@ -538,25 +595,36 @@ class SolarPFModel:
                 nav = self._update_single_pf(pf, curtail_today)
                 total_nav += nav
                 total_pv += self._pv_engine_for_pf(pf, curtail_today)
+                # POST 상태 PF만 분배금 발생
+                total_distribution += self._calculate_monthly_distribution_for_pf(pf, curtail_today)
                 active_count += 1
                 if pf.status == 'PRE':
                     avg_p_complete += pf.P_complete
 
-        # 평균 완공 확률 (PRE 상태 PF만)
-        pre_count = sum(1 for pf in self.pf_list if pf.status == 'PRE')
-        if pre_count > 0:
-            avg_p_complete /= pre_count
-        else:
-            avg_p_complete = 1.0
-
         # 현실세계 조정
         if self.risk_adjust == 'YES':
             total_nav *= (1.0 - 0.02)  # 리스크 프리미엄 2%
+            total_pv *= (1.0 - 0.02)
 
-        # 3. 롤오버 훅
-        self.apply_events(time_t)
+        # 3. 롤오버 훅 (신규 PF 편입 시 NAV에 반영)
+        rollover_nav = self.apply_events(time_t, total_nav)
+        if rollover_nav is not None:
+            total_nav = rollover_nav
+            # 신규 PF들의 PV도 추가
+            for pf in self.pf_list:
+                if pf.is_active() and pf.start_month == time_t:
+                    total_pv += self._pv_engine_for_pf(pf, curtail_today)
+                    active_count += 1
 
-        # 4. 펀드 전체 상태 결정
+        # 4. 평균 완공 확률 (PRE 상태 PF만) — 롤오버 후 재계산
+        pre_count = sum(1 for pf in self.pf_list if pf.status == 'PRE' and pf.is_active())
+        if pre_count > 0:
+            avg_p_complete = sum(pf.P_complete for pf in self.pf_list
+                                 if pf.status == 'PRE' and pf.is_active()) / pre_count
+        else:
+            avg_p_complete = 1.0
+
+        # 5. 펀드 전체 상태 결정
         if active_count == 0:
             fund_status = 'FAILED'
         elif all(pf.status == 'POST' for pf in self.pf_list if pf.is_active()):
@@ -570,6 +638,8 @@ class SolarPFModel:
             'P_complete_t': avg_p_complete,
             'PV_t': total_pv,
             'NAV_t': total_nav,
+            'token_count_t': self.token_count,
+            'monthly_distribution_t': total_distribution,  # 월별 분배금 (펀드 전체)
         }
 
     # ------------------------------------------------------------------ #
@@ -612,24 +682,40 @@ class SolarPFModel:
     #  롤오버 훅 (Task #10) — 60개월 주기 롤오버                          #
     # ------------------------------------------------------------------ #
 
-    def apply_events(self, t):
+    def apply_events(self, t, current_nav_before_rollover=None):
         """PF 롤오버 로직.
 
         60개월마다 신규 5개 PF 편입.
         토큰 증자 3가지 조건 검증 후 실행.
+
+        Parameters
+        ----------
+        t : int
+            현재 시점 (월)
+        current_nav_before_rollover : float, optional
+            롤오버 전 NAV (transition_fn에서 전달)
+
+        Returns
+        -------
+        float or None
+            롤오버 성공 시 신규 NAV (기존 NAV + 신규 PF 가치), 실패 시 None
         """
         # 롤오버 시점 체크 (60개월마다, t=0 제외)
         if t == 0 or t % T_ROLLOVER != 0:
-            return
+            return None
 
         # 만료된 PF 제거
         self.pf_list = [pf for pf in self.pf_list if not pf.is_expired()]
 
         # 현재 펀드 가치 계산 (기존 토큰 총 가치)
-        current_nav = sum(
-            self._pv_engine_for_pf(pf, False)
-            for pf in self.pf_list if pf.is_active()
-        )
+        # transition_fn에서 전달받은 값 사용 (risk_adjust 적용된 값)
+        if current_nav_before_rollover is not None:
+            current_nav = current_nav_before_rollover
+        else:
+            current_nav = sum(
+                self._pv_engine_for_pf(pf, False)
+                for pf in self.pf_list if pf.is_active()
+            )
 
         # 신규 PF 가치 (5개 PF의 예상 가치)
         new_pf_value = self._estimate_new_pf_value()
@@ -652,9 +738,8 @@ class SolarPFModel:
                 self.pf_list.append(pf)
                 self.pf_id_counter += 1
 
-            # 토큰 수 및 가격 업데이트
+            # 토큰 수 업데이트
             self.token_count += result['new_tokens']
-            self.token_price = result['new_price']
 
             # 롤오버 기록
             self.rollover_schedule.append({
@@ -664,6 +749,13 @@ class SolarPFModel:
                 'token_price': result['new_price'],
                 'issue_price': result['issue_price'],
             })
+
+            # 신규 NAV 반환 (기존 NAV + 신규 PF 가치)
+            # 신규 PF는 PRE 상태이므로 P_COMPLETE_INIT을 곱해야 함
+            new_pf_nav = new_pf_value * P_COMPLETE_INIT
+            return current_nav + new_pf_nav
+
+        return None
 
     def _estimate_new_pf_value(self):
         """신규 PF 5개의 예상 가치 (편입 시점 기준)."""
@@ -718,39 +810,57 @@ class SolarPFModel:
         return x
 
     def _execute_token_issuance(self, current_nav, new_pf_value, Q):
-        """토큰 증자 3가지 조건 검증 및 실행.
+        """토큰 증자 3가지 조건 검증 및 실행 (편입 시점 가치 기준).
 
-        조건 1: b ≤ (y + ab) / (a + x) — 기존 주주 보호
+        조건 1: b ≤ (y' + current_nav) / (a + x) — 기존 주주 보호
         조건 2: P × x = Q — 자금조달
-        조건 3: P ≤ (y + ab) / (a + x) — 신규 주주 보호
+        조건 3: P ≤ (y' + current_nav) / (a + x) — 신규 주주 보호
+
+        여기서:
+        - a = 기존 토큰 수
+        - b = 실제 토큰 가격 = current_nav / a
+        - y' = 신규 PF 편입 시점 가치 = 완공후가치 × P_COMPLETE_INIT
+        - x = 신규 발행 토큰 수
+        - P = 토큰 공모가
+        - Q = 자금조달액
 
         Returns
         -------
         dict: {success, new_tokens, issue_price, new_price}
         """
         a = self.token_count           # 기존 토큰 수
-        b = self.token_price           # 기존 토큰 가격
-        y = new_pf_value               # 신규 PF 가치
+        # 신규 PF 편입 시점 가치 (완공후가치 × 초기완공확률)
+        y = new_pf_value * P_COMPLETE_INIT
 
-        if a == 0 or b == 0:
-            # 초기 상태 — 단순 발행
-            new_tokens = ROLLOVER_PF_COUNT
+        if a == 0 or current_nav <= 0:
+            # 초기 상태 — 단순 발행 (PF당 120,000토큰 × 5 PF)
+            new_tokens = ROLLOVER_PF_COUNT * TOKENS_PER_PF
             return {
                 'success': True,
                 'new_tokens': new_tokens,
-                'issue_price': TOKEN_AMOUNT,
-                'new_price': TOKEN_AMOUNT,
+                'issue_price': TOKEN_UNIT_PRICE,
+                'new_price': TOKEN_UNIT_PRICE,
             }
 
-        # 조건을 만족하는 x 범위 계산
-        # 조건 1: b(a+x) ≤ y + ab → bx ≤ y → x ≤ y/b
-        # 조건 3: P ≤ (y+ab)/(a+x), P = Q/x → Q/x ≤ (y+ab)/(a+x)
-        #         Q(a+x) ≤ x(y+ab) → Qa + Qx ≤ xy + abx → Qa ≤ x(y+ab-Q)
-        #         x ≥ Qa/(y+ab-Q)  (if y+ab > Q)
+        # 실제 토큰 가격 (current_nav 기준)
+        b = current_nav / a
 
-        total_value = y + a * b
+        # 조건을 만족하는 x 범위 계산
+        # 조건 1: b ≤ (y + current_nav) / (a + x)
+        #         b(a + x) ≤ y + current_nav
+        #         ba + bx ≤ y + current_nav
+        #         bx ≤ y  (∵ ba = current_nav)
+        #         x ≤ y / b
+        #
+        # 조건 3: P ≤ (y + current_nav) / (a + x), P = Q / x
+        #         Q / x ≤ (y + current_nav) / (a + x)
+        #         Q(a + x) ≤ x(y + current_nav)
+        #         Qa ≤ x(y + current_nav - Q)
+        #         x ≥ Qa / (y + current_nav - Q)  (if y + current_nav > Q)
+
+        total_value = y + current_nav
         if total_value <= Q:
-            # 신규 가치가 자금조달액보다 작음 — 증자 불가
+            # 신규 가치 + 기존 가치가 자금조달액보다 작음 — 증자 불가
             return {'success': False, 'new_tokens': 0, 'issue_price': 0, 'new_price': b}
 
         x_min = Q * a / (total_value - Q)
@@ -764,6 +874,9 @@ class SolarPFModel:
         x = self._sample_winning_bid(x_min, x_max)
         P = Q / x                       # 토큰 공모가
         new_price = total_value / (a + x)
+
+        # 토큰 가격 업데이트 (실제 NAV 기준)
+        self.token_price = new_price
 
         return {
             'success': True,
