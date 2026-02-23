@@ -17,6 +17,7 @@ plt.rcParams['axes.unicode_minus'] = False
 from SolarPFModel import (
     SolarPFModel,
     T_CONSTRUCTION, T_SINGLE_PF, T_SIMULATION, T_ROLLOVER,
+    T_MERGE_BASELINE,
     P_COMPLETE_INIT, INITIAL_PF_COUNT, TOKEN_AMOUNT, TOKENS_PER_PF,
 )
 from SolarPFPolicy import SolarPFPolicy
@@ -62,6 +63,7 @@ def main():
     all_status = []
     all_token_count = []
     all_distribution = []  # 월별 분배금 (펀드 전체)
+    all_merge_history = []  # 병합 이력 (trial별)
 
     print(f"Running {trial_size} Monte Carlo simulations (T={T} months)...")
 
@@ -74,6 +76,7 @@ def main():
         all_status.append([h['state'].status_t for h in history])
         all_token_count.append([h['state'].token_count_t for h in history])
         all_distribution.append([h['state'].monthly_distribution_t for h in history])
+        all_merge_history.append(list(model.merge_history))
 
         if (trial + 1) % 10 == 0:
             print(f"  Trial {trial + 1}/{trial_size} done")
@@ -125,14 +128,22 @@ def main():
     # --- 토큰당 가격 (NAV / token_count) ---
     ax = axes[1]
     for i in range(trial_size):
-        ax.plot(days, all_price_per_token[i] / UNIT, color=colors[i], alpha=0.35, linewidth=0.6)
+        ax.plot(days, all_price_per_token[i], color=colors[i], alpha=0.35, linewidth=0.6)
     mean_price = np.mean(all_price_per_token, axis=0)
-    ax.plot(days, mean_price / UNIT, color='black', linewidth=1.8, label='Mean Price/Token')
+    ax.plot(days, mean_price, color='black', linewidth=1.8, label='Mean Price/Token')
     ax.axvline(x=T_CONSTRUCTION, color='red', linestyle='--', alpha=0.7, linewidth=1.2)
     for i, rm in enumerate(rollover_months):
         label = 'Rollover' if i == 0 else None
         ax.axvline(x=rm, color='green', linestyle=':', alpha=0.5, linewidth=1.0, label=label)
-    ax.set_ylabel(f'Price per Token ({UNIT_LABEL})')
+    # 병합 시점 표시 (모든 trial의 병합 시점 수집)
+    merge_months_set = set()
+    for mh in all_merge_history:
+        for event in mh:
+            merge_months_set.add(event['t'])
+    for i, mt in enumerate(sorted(merge_months_set)):
+        label = 'Reverse Split' if i == 0 else None
+        ax.axvline(x=mt, color='purple', linestyle='-', alpha=0.6, linewidth=1.2, label=label)
+    ax.set_ylabel('Price per Token (원)')
     ax.set_title('Token Price = Total NAV / Token Count')
     ax.legend(loc='upper right')
 
@@ -287,6 +298,13 @@ def main():
     print(f"Mean total dist/token (40yr) : {np.mean(total_dist_per_token):>12,.0f} KRW")
     print(f"Mean annual dist/token       : {mean_annual_dist:>12,.0f} KRW")
     print(f"Implied yield (dist/price)   : {(mean_annual_dist / 10000) * 100:>10.2f} %")
+    print("-" * 40)
+    merge_counts = [len(mh) for mh in all_merge_history]
+    print(f"Mean merge count (per trial) : {np.mean(merge_counts):>10.1f}")
+    print(f"Max  merge count             : {np.max(merge_counts):>10d}")
+    if any(merge_counts):
+        all_merge_times = [e['t'] for mh in all_merge_history for e in mh]
+        print(f"First merge month (min)      : {min(all_merge_times):>10d}")
     print("========================================")
 
 

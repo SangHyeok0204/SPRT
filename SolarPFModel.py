@@ -21,6 +21,11 @@ T_SINGLE_PF = T_CONSTRUCTION + T_OPERATION    # 252개월
 T_SIMULATION = 480                            # 40년 (롤오버)
 T_ROLLOVER = 60                               # 롤오버 주기 (5년)
 
+# 토큰 병합 (Reverse Split)
+T_MERGE_BASELINE = 240                        # 병합 기준가 설정 시점 (20년, Month 240 롤오버 직후)
+MERGE_TRIGGER_RATIO = 0.5                     # 기준가 대비 50% 이하 시 병합 트리거
+MERGE_RATIO = 2                               # 병합 비율 (2:1 → 토큰 2개를 1개로)
+
 # 자본구조 (원 단위)
 CAPITAL_TOTAL = 2_000_000_000                 # 프로젝트당 총 자금조달 20억
 EQUITY_AMOUNT = 400_000_000                   # 자기자본 4억 (20%)
@@ -90,12 +95,16 @@ REC_CAP = 134.0               # REC 상한 (86.99 + 46.98)
 
 # 발전량 파라미터 (1MW 태양광 PF, 이용률 14.5% 가정)
 # 월별 계절성 계수: 2024년 한국전력거래소 일별 발전량 실데이터 기반
-# 계수 = 해당월 일평균 / 연 일평균 (1.0 = 연평균 수준)
-MONTHLY_SEASONAL = [
+# 원시 계수 = 해당월 일평균 / 연 일평균 (1.0 = 연평균 수준)
+_MONTHLY_SEASONAL_RAW = [
     0.698, 0.657, 1.092, 1.138, 1.417, 1.284,   # 1~6월
     0.954, 1.256, 1.083, 0.850, 0.809, 0.749,   # 7~12월
 ]
-# 월별 계절계수는 MONTHLY_SEASONAL을 직접 사용 (인덱스 = t % 12)
+# 경사각 보정 축소 (dampening): S'_m = 1 + α × (S_m - 1)
+# α = 0.55 → CV 0.24 → 0.13 (PVGIS 30도 고정경사 1MW 수준)
+# 전국 합계(비최적 경사각 혼재)를 최적 경사각 단일 프로젝트 수준으로 조정
+SEASONAL_DAMPING = 0.1
+MONTHLY_SEASONAL = [1 + SEASONAL_DAMPING * (s - 1) for s in _MONTHLY_SEASONAL_RAW]
 
 ENERGY_PARAMS = dict(
     base_generation=105.9,    # MWh/월 (1MW × 24h × 30.4d × 14.5%)
@@ -172,6 +181,10 @@ class SolarPFModel:
         self.token_count = 0.0                # 총 발행 토큰 수
         self.token_price = 0.0                # 토큰 가격
 
+        # 토큰 병합 (Reverse Split)
+        self.merge_baseline_price = None          # 병합 기준가 (T_MERGE_BASELINE 롤오버 직후 설정)
+        self.merge_history = []                   # 병합 이력 기록
+
         # 에피소드 관리 변수
         self.t = 0
         self.obj = 0.0
@@ -203,6 +216,8 @@ class SolarPFModel:
         self.contracted_price = None
         self.pf_id_counter = 0
         self._init_pf_list()
+        self.merge_baseline_price = None
+        self.merge_history = []
         self.state = self.build_state(self.init_state)
         self.history = []
 
@@ -560,6 +575,39 @@ class SolarPFModel:
         return total_nav
 
     # ------------------------------------------------------------------ #
+    #  토큰 병합 (Reverse Split)                                          #
+    # ------------------------------------------------------------------ #
+
+    def _check_and_merge_tokens(self, total_nav):
+        """토큰 병합 조건 확인 및 실행.
+
+        merge_baseline_price가 설정된 후, 현재 토큰 가격이
+        기준가의 MERGE_TRIGGER_RATIO 이하로 하락하면 MERGE_RATIO:1 병합 실행.
+        NAV는 변동 없이 토큰 수만 감소 → 개당 가격 복원.
+        """
+        if self.merge_baseline_price is None:
+            return
+
+        if self.token_count <= 0:
+            return
+
+        current_price = total_nav / self.token_count
+        trigger_price = self.merge_baseline_price * MERGE_TRIGGER_RATIO
+
+        if current_price < trigger_price:
+            old_count = self.token_count
+            self.token_count /= MERGE_RATIO
+            self.token_price = total_nav / self.token_count
+
+            self.merge_history.append({
+                't': self.t,
+                'old_count': old_count,
+                'new_count': self.token_count,
+                'price_before': current_price,
+                'price_after': self.token_price,
+            })
+
+    # ------------------------------------------------------------------ #
     #  NAV 계산기 (Task #6)                                               #
     # ------------------------------------------------------------------ #
 
@@ -624,7 +672,10 @@ class SolarPFModel:
         else:
             avg_p_complete = 1.0
 
-        # 5. 펀드 전체 상태 결정
+        # 5. 토큰 병합 체크 (기준가 설정 후, 가격 하락 시 병합)
+        self._check_and_merge_tokens(total_nav)
+
+        # 6. 펀드 전체 상태 결정
         if active_count == 0:
             fund_status = 'FAILED'
         elif all(pf.status == 'POST' for pf in self.pf_list if pf.is_active()):
@@ -753,7 +804,13 @@ class SolarPFModel:
             # 신규 NAV 반환 (기존 NAV + 신규 PF 가치)
             # 신규 PF는 PRE 상태이므로 P_COMPLETE_INIT을 곱해야 함
             new_pf_nav = new_pf_value * P_COMPLETE_INIT
-            return current_nav + new_pf_nav
+            new_total_nav = current_nav + new_pf_nav
+
+            # 병합 기준가 설정 (T_MERGE_BASELINE 롤오버 직후)
+            if t == T_MERGE_BASELINE and self.merge_baseline_price is None:
+                self.merge_baseline_price = new_total_nav / self.token_count
+
+            return new_total_nav
 
         return None
 
@@ -795,15 +852,15 @@ class SolarPFModel:
             return x_min
 
         # 지수 분포 파라미터 (0에서 1로 정규화된 범위에서)
-        # b = ln(0.8/0.01) ≈ 4.38 (x_max에서 80%, x_min에서 ~1%)
-        b = 4.0
+        # x_min 편향: 토큰 적게 발행 → 기존투자자 보호 (발행가 상승)
+        b = 10.0
 
-        # 역변환 샘플링
+        # 역변환 샘플링 (x_min 편향: p(t) ∝ exp(-bt))
         u = self.prng.random()
-        # CDF: F(t) = (exp(bt) - 1) / (exp(b) - 1), t ∈ [0, 1]
-        # 역함수: t = ln(1 + u*(exp(b) - 1)) / b
-        exp_b = np.exp(b)
-        t = np.log(1 + u * (exp_b - 1)) / b
+        # CDF: F(t) = (1 - exp(-bt)) / (1 - exp(-b)), t ∈ [0, 1]
+        # 역함수: t = -ln(1 - u*(1 - exp(-b))) / b
+        exp_neg_b = np.exp(-b)
+        t = -np.log(1 - u * (1 - exp_neg_b)) / b
 
         # t를 [x_min, x_max] 범위로 변환
         x = x_min + t * (x_max - x_min)

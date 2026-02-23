@@ -45,7 +45,7 @@ class SolarPFPolicy:
             decision = policy_copy.get_decision()
             model_copy.step(decision)
 
-        return (model_copy.obj, model_copy.history.copy())
+        return (model_copy.obj, model_copy.history.copy(), model_copy.merge_history.copy())
 
     # ------------------------------------------------------------------ #
     #  헬퍼                                                               #
