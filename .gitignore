@@ -3,3 +3,5 @@ __pycache__/
 .claude/
 .gemini/
 *.pyc
+논문_초안.txt
+논문_수정안.txt

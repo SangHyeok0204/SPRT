@@ -68,7 +68,7 @@ def main():
     print(f"Running {trial_size} Monte Carlo simulations (T={T} months)...")
 
     for trial in range(trial_size):
-        _, history = policy.run_policy(seed=trial)
+        _, history, merge_history = policy.run_policy(seed=trial)
 
         all_nav.append([h['state'].NAV_t for h in history])
         all_pv.append([h['state'].PV_t for h in history])
@@ -76,7 +76,7 @@ def main():
         all_status.append([h['state'].status_t for h in history])
         all_token_count.append([h['state'].token_count_t for h in history])
         all_distribution.append([h['state'].monthly_distribution_t for h in history])
-        all_merge_history.append(list(model.merge_history))
+        all_merge_history.append(merge_history)
 
         if (trial + 1) % 10 == 0:
             print(f"  Trial {trial + 1}/{trial_size} done")

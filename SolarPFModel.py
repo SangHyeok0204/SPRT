@@ -19,7 +19,7 @@ T_CONSTRUCTION = 12                           # 1년
 T_OPERATION = 240                             # 20년
 T_SINGLE_PF = T_CONSTRUCTION + T_OPERATION    # 252개월
 T_SIMULATION = 480                            # 40년 (롤오버)
-T_ROLLOVER = 60                               # 롤오버 주기 (5년)
+T_ROLLOVER = 12                               # 롤오버 주기 (1년)
 
 # 토큰 병합 (Reverse Split)
 T_MERGE_BASELINE = 240                        # 병합 기준가 설정 시점 (20년, Month 240 롤오버 직후)
@@ -32,7 +32,7 @@ EQUITY_AMOUNT = 400_000_000                   # 자기자본 4억 (20%)
 SENIOR_DEBT = 400_000_000                     # 선순위 대출 4억 (20%)
 TOKEN_AMOUNT = 1_200_000_000                  # 토큰화 대상 12억 (60%)
 INITIAL_PF_COUNT = 5                          # 초기 운영 PF 수
-ROLLOVER_PF_COUNT = 5                         # 롤오버 시 편입 PF 수
+ROLLOVER_PF_COUNT = 1                         # 롤오버 시 편입 PF 수
 
 # 토큰 단위 (소액 투자자 접근성)
 TOKEN_UNIT_PRICE = 10_000                     # 토큰 1개당 가격 1만원
