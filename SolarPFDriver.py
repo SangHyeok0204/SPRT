@@ -46,7 +46,7 @@ def main():
     # ================================================================== #
     model = SolarPFModel(
         state_names, x_names, init_state, T,
-        risk_adjust='YES', seed=0,
+        seed=0,
     )
 
     # ================================================================== #
@@ -135,14 +135,6 @@ def main():
     for i, rm in enumerate(rollover_months):
         label = 'Rollover' if i == 0 else None
         ax.axvline(x=rm, color='green', linestyle=':', alpha=0.5, linewidth=1.0, label=label)
-    # 병합 시점 표시 (모든 trial의 병합 시점 수집)
-    merge_months_set = set()
-    for mh in all_merge_history:
-        for event in mh:
-            merge_months_set.add(event['t'])
-    for i, mt in enumerate(sorted(merge_months_set)):
-        label = 'Reverse Split' if i == 0 else None
-        ax.axvline(x=mt, color='purple', linestyle='-', alpha=0.6, linewidth=1.2, label=label)
     ax.set_ylabel('Price per Token (원)')
     ax.set_title('Token Price = Total NAV / Token Count')
     ax.legend(loc='upper right')
