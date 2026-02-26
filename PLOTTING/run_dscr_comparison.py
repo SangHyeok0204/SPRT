@@ -29,8 +29,8 @@ INTEREST_RATE = 0.06                # 선순위 대출 연이자율
 REPAYMENT_YEARS = 15                # 대출 상환기간
 REPAYMENT_MONTHS = REPAYMENT_YEARS * 12
 
-OPEX_ANNUAL = 20_000_000
-ADMIN_FEE_ANNUAL = 15_000_000
+OPEX_ANNUAL = 10_000_000
+ADMIN_FEE_ANNUAL = 10_000_000
 MAJOR_REPAIR_ANNUAL = 5_000_000
 FIXED_COST_MONTHLY = (OPEX_ANNUAL + ADMIN_FEE_ANNUAL + MAJOR_REPAIR_ANNUAL) / 12
 
@@ -57,13 +57,13 @@ def compute_annual_dscr(token_ratio):
     token_amount = DEBT_PLUS_TOKEN * token_ratio
     debt_amount = DEBT_PLUS_TOKEN - token_amount
 
-    # 대출 상환 (균등원금상환)
+    # 원리금균등상환 월 납입액
+    r_m = INTEREST_RATE / 12
+    n_months = REPAYMENT_MONTHS
     if debt_amount > 0:
-        monthly_principal = debt_amount / REPAYMENT_MONTHS
-        monthly_interest = debt_amount * (INTEREST_RATE / 12)
+        monthly_pmt = debt_amount * r_m * (1 + r_m) ** n_months / ((1 + r_m) ** n_months - 1)
     else:
-        monthly_principal = 0.0
-        monthly_interest = 0.0
+        monthly_pmt = 0.0
 
     annual_dscr = []
 
@@ -81,9 +81,9 @@ def compute_annual_dscr(token_ratio):
             # NOI = 매출 - 고정비용
             noi = revenue - FIXED_COST_MONTHLY
 
-            # Debt Service (상환기간 내만)
+            # Debt Service (원리금균등상환, 상환기간 내만)
             if op_month < REPAYMENT_MONTHS and debt_amount > 0:
-                ds = monthly_principal + monthly_interest
+                ds = monthly_pmt
             else:
                 ds = 0.0
 

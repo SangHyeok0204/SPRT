@@ -4,6 +4,10 @@ run_plots.py — 논문용 시뮬레이션 플롯 일괄 생성
 실행: python run_plots.py
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -337,7 +341,7 @@ def plot_completion_sensitivity():
                    linewidth=1.2, label='완공')
         ax.set_xlabel('경과 연수')
         ax.set_ylabel('토큰 가격 (원)')
-        ax.set_title(f'초기완공률 {p} — MC100 평균 가격 (0~3년)')
+        ax.set_title(f'초기완공률 {p} — 평균 가격 (0~3년)')
         ax.xaxis.set_major_locator(MultipleLocator(0.5))
         ax.xaxis.set_minor_locator(MultipleLocator(1/12))
         ax.set_xlim(0, T / 12)

@@ -5,6 +5,10 @@ Plot 1: 초기 완공확률(P_COMPLETE_INIT) 민감도  (0.90 / 0.95 / 0.99)
 Plot 2: 월별 부도확률(P_DEFAULT) 민감도        (0.003 / 0.005 / 0.008)
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -95,7 +99,7 @@ def plot_p_complete_sensitivity():
 
     ax.set_xlabel('시간 (월)')
     ax.set_ylabel('토큰당 가격 (원)')
-    ax.set_title(f'초기 완공확률별 평균 토큰 가격 경로 (MC {trial_size}회)')
+    ax.set_title('초기 완공확률별 평균 토큰 가격 경로')
     ax.legend(loc='upper right', fontsize=9)
     ax.grid(axis='y', alpha=0.3)
     ax.xaxis.set_major_locator(MultipleLocator(12))
@@ -134,7 +138,7 @@ def plot_p_default_sensitivity():
 
     ax.set_xlabel('시간 (월)')
     ax.set_ylabel('토큰당 가격 (원)')
-    ax.set_title(f'부도확률별 평균 토큰 가격 경로 (MC {trial_size}회)')
+    ax.set_title('부도확률별 평균 토큰 가격 경로')
     ax.legend(loc='upper right', fontsize=9)
     ax.grid(axis='y', alpha=0.3)
     ax.xaxis.set_major_locator(MultipleLocator(60))

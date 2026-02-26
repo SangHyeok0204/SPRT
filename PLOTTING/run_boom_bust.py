@@ -9,6 +9,10 @@ run_boom_bust.py — 산업 호황/불황 시나리오별 토큰 가격 경로
   5. 장기 호황  : 9~15년차 편입 수 누적 증가 (2,3,4,5,6,7,8개), 이후 복귀
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
@@ -152,7 +156,7 @@ def main():
 
     ax.set_xlabel('시간 (월)')
     ax.set_ylabel('토큰당 가격 (원)')
-    ax.set_title(f'산업 호황·불황 시나리오별 평균 토큰 가격 경로 (MC {trial_size}회)')
+    ax.set_title('산업 호황·불황 시나리오별 평균 토큰 가격 경로')
     ax.legend(loc='upper right', fontsize=9)
     ax.grid(axis='y', alpha=0.3)
     ax.xaxis.set_major_locator(MultipleLocator(60))

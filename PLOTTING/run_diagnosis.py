@@ -3,6 +3,10 @@ run_diagnosis.py — 토큰 가격 우하향 원인 진단
 NAV, 토큰 수, 활성 PF 수, PF별 PV 기여분 추적
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')

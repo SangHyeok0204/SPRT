@@ -3,6 +3,10 @@ run_diagnosis2.py — 초반 우상향 원인 진단
 매월 NAV 변화율 vs 토큰 변화율 비교, 롤오버 성공/실패 추적
 """
 
+import sys
+from pathlib import Path
+sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
