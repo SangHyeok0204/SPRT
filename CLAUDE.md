@@ -27,7 +27,7 @@ This executes 50 Monte Carlo trials over 480 months (40 years) and saves results
 ### MDP Framework Structure
 
 The model follows an MDP (Markov Decision Process) pattern:
-- **State**: `(time_t, status_t, P_complete_t, PV_t, NAV_t, token_count_t)` - uses namedtuples for type safety
+- **State**: `(time_t, status_t, P_complete_t, PV_t, NAV_t, token_count_t, monthly_distribution_t)` - uses namedtuples for type safety
 - **Status values**: `'PRE'` (construction), `'POST'` (operation), `'FAILED'` (default)
 - **Transition**: `S_t × A_t × W_t → S_{t+1}` with monthly timesteps
 
@@ -37,19 +37,35 @@ The model follows an MDP (Markov Decision Process) pattern:
 2. **Market buffers** - Rolling 6-month windows for SMP/REC prices and energy generation
 3. **GBM price simulation** - SMP/REC follow geometric Brownian motion with caps/floors
 4. **Completion probability** - `P(t) = h(t) × g(t)` hazard rate model
-5. **Rollover mechanism** - 60-month cycle for new PF inclusion with token issuance constraints
+5. **Rollover mechanism** - 12-month cycle for new PF inclusion with token issuance constraints
+6. **Token merge (Reverse Split)** - 2:1 merge when token price drops below 50% of baseline
 
 ### Key Parameters (in `SolarPFModel.py`)
 
 - `T_CONSTRUCTION = 12` months, `T_OPERATION = 240` months
 - `T_SIMULATION = 480` months (40 years with rollover)
-- `T_ROLLOVER = 60` months (5-year rollover cycle)
-- `INITIAL_PF_COUNT = 5`, `ROLLOVER_PF_COUNT = 5`
+- `T_ROLLOVER = 12` months (1-year rollover cycle)
+- `INITIAL_PF_COUNT = 1`, `ROLLOVER_PF_COUNT = 1`
 - `TOKEN_UNIT_PRICE = 10,000` (토큰 1개당 1만원)
-- `TOKENS_PER_PF = 120,000` (PF당 토큰 수 = 12억 ÷ 1만)
+- `TOKENS_PER_PF = 80,000` (PF당 토큰 수 = 8억 ÷ 1만)
 - `P_DEFAULT = 0.003` (0.3%/month construction default)
 - `P_COMPLETE_INIT = 0.95` (95% initial completion probability, based on ~2.5% real-world solar PF default rate)
 - `R_DISCOUNT_ANNUAL = 0.045` (4.5% social discount rate)
+
+### Capital Structure (per PF)
+
+| 항목 | 금액 | 비율 |
+|------|-----:|-----:|
+| **총 사업비** | **20억 원** | 100% |
+| 자기자본 (Equity) | 4억 원 | 20% |
+| 선순위 대출 (Senior Debt) | 8억 원 | 40% |
+| **토큰화 대상** | **8억 원** | **40%** |
+
+### Revenue Distribution
+
+- 지분수익 : 토큰수익 = 1 : 2 (자기자본 4억 : 토큰 8억 비율)
+- `EQUITY_SHARE = 1/3` (≈33.3%)
+- `TOKEN_SHARE = 2/3` (≈66.7%)
 
 ### SMP/REC GBM Parameters
 
@@ -63,22 +79,14 @@ The model follows an MDP (Markov Decision Process) pattern:
 
 **변동성 조정 근거**: 고정가격이 6개월 평균으로 산정되므로 σ/√6 ≈ 41% 수준으로 감소. 보수적으로 절반(50%) 적용.
 
-### Evaluation Modes
-
-```python
-# Risk-neutral mode (default)
-model = SolarPFModel(..., risk_adjust='NO')
-
-# Real-world mode (with risk premium)
-model = SolarPFModel(..., risk_adjust='YES')
-```
-
 ## Design Documentation
 
 - `nav_simulation_guide.md` - Detailed NAV simulation design specification
 - `SMP_REC_발전량_DATA_ANALYSIS.md` - Data analysis and parameter estimation methodology
 - `project_flow.md` - Business logic for STO token structure and rollover constraints
 - `사용법.md` - Usage guide (Korean)
+- `single_pf_spec.md` - Single PF financial specification
+- `모델링 설명.txt` - Modeling methodology description (Korean)
 
 ## Token Issuance Constraints
 
@@ -88,12 +96,12 @@ When adding new PFs via rollover, three conditions must be satisfied:
 3. **New shareholder protection**: `P ≤ (y + ab) / (a + x)`
 
 Where:
-- `a` = existing tokens (초기 600,000개)
+- `a` = existing tokens (초기 80,000개)
 - `b` = current token price (= current NAV / a)
 - `x` = new tokens to issue
 - `y` = **inception value** of new PF (= completion value × P_COMPLETE_INIT)
 - `P` = issue price per token (기준 1만원)
-- `Q` = funding amount (= TOKEN_AMOUNT × ROLLOVER_PF_COUNT = 60억원)
+- `Q` = funding amount (= TOKEN_AMOUNT × ROLLOVER_PF_COUNT = 8억원)
 
 **Important**: `y` is the inception value (완공후가치 × 0.95), not the completion value. This ensures consistency with NAV calculation where new PFs are valued at inception value during construction.
 
@@ -102,6 +110,6 @@ Where:
 | 항목 | 값 |
 |------|-----|
 | 토큰 1개당 가격 | 10,000원 |
-| PF당 토큰 수 | 120,000개 |
-| 초기 발행 토큰 수 | 600,000개 (5 PF × 120,000) |
-| 초기 자금조달 | 60억원 |
+| PF당 토큰 수 | 80,000개 |
+| 초기 발행 토큰 수 | 80,000개 (1 PF × 80,000) |
+| 초기 자금조달 | 8억원 |

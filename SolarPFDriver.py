@@ -35,7 +35,7 @@ def main():
         'P_complete_t': P_COMPLETE_INIT,
         'PV_t': 0.0,
         'NAV_t': 0.0,
-        'token_count_t': float(INITIAL_PF_COUNT * TOKENS_PER_PF),  # 5 PF × 120,000 = 600,000 토큰
+        'token_count_t': float(INITIAL_PF_COUNT * TOKENS_PER_PF),  # 1 PF × 80,000 = 80,000 토큰
         'monthly_distribution_t': 0.0,  # 월별 분배금 (건설 중에는 0)
     }
     T = T_SIMULATION      # 480개월 (40년, 롤오버 포함)
